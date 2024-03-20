@@ -1,0 +1,1 @@
+# EasyDrag: Efficient Point-based Manipulation on Diffusion Models (CVPR 2024)
