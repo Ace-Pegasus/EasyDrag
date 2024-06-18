@@ -1,4 +1,4 @@
-name: control
+name: easydrag
 channels:
   - pytorch
   - defaults

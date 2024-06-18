@@ -404,35 +404,38 @@ def drag_diffusion_update(model, init_code, t, handle_points, target_points, ori
                 handle_points, update_point = point_tracking(F0, F1, handle_points, handle_points_init, target_points, args)
                 if step_idx == 0:
                     update_point = True
-                if update_point:
-                    updated_x0 = ddim_sampler.gen(
-                        latents=init_code.clone().detach(),
-                        c=args.cond,
-                        start_step=args.n_actual_inference_step,
-                        end_step=0,
-                        unconditional_guidance_scale=args.guidance_scale,
-                        unconditional_conditioning=args.uncond,
-                        ori_latents_list=ori_code_list,
-                        reference_only=args.reference_only,
-                        points=handle_points,
-                        ref_start_step=args.ref_start_step,
-                        args=args,
-                    )
-                    x_sample = model.decode_first_stage(updated_x0)
-                    x_sample = (einops.rearrange(x_sample, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().float().numpy().clip(0, 255)[0]
-                    x_sample = np.ascontiguousarray(x_sample, dtype=np.uint8)
-                    for i in range(len(handle_points)):
-                        tmp_p = tuple(handle_points[i].to(torch.int).tolist())
-                        tmp_p = (tmp_p[1] * 8 // args.feat_scale, tmp_p[0] * 8 // args.feat_scale)
-                        tmp_t = tuple(target_points[i].to(torch.int).tolist())
-                        tmp_t = (tmp_t[1] * 8 // args.feat_scale, tmp_t[0] * 8 // args.feat_scale)
-                        cv2.circle(x_sample, tmp_p, 6, (255, 0, 0), -1)
-                        cv2.circle(x_sample, tmp_t, 6, (0, 0, 255), -1)
-                        cv2.arrowedLine(x_sample, tmp_p, tmp_t, (255, 255, 255), 3, tipLength=0.2)
-                    image_list.append(x_sample)
-                    save_sample = preprocess_image(x_sample, device=model.device)
-                    save_sample = save_sample * 0.5 + 0.5
-                    save_image(save_sample, os.path.join(save_dir, 'result_%d.png'%update_times))
+
+                
+                # save intermediate results when updating points
+                # if update_point:
+                #     updated_x0 = ddim_sampler.gen(
+                #         latents=init_code.clone().detach(),
+                #         c=args.cond,
+                #         start_step=args.n_actual_inference_step,
+                #         end_step=0,
+                #         unconditional_guidance_scale=args.guidance_scale,
+                #         unconditional_conditioning=args.uncond,
+                #         ori_latents_list=ori_code_list,
+                #         reference_only=args.reference_only,
+                #         points=handle_points,
+                #         ref_start_step=args.ref_start_step,
+                #         args=args,
+                #     )
+                #     x_sample = model.decode_first_stage(updated_x0)
+                #     x_sample = (einops.rearrange(x_sample, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().float().numpy().clip(0, 255)[0]
+                #     x_sample = np.ascontiguousarray(x_sample, dtype=np.uint8)
+                #     for i in range(len(handle_points)):
+                #         tmp_p = tuple(handle_points[i].to(torch.int).tolist())
+                #         tmp_p = (tmp_p[1] * 8 // args.feat_scale, tmp_p[0] * 8 // args.feat_scale)
+                #         tmp_t = tuple(target_points[i].to(torch.int).tolist())
+                #         tmp_t = (tmp_t[1] * 8 // args.feat_scale, tmp_t[0] * 8 // args.feat_scale)
+                #         cv2.circle(x_sample, tmp_p, 6, (255, 0, 0), -1)
+                #         cv2.circle(x_sample, tmp_t, 6, (0, 0, 255), -1)
+                #         cv2.arrowedLine(x_sample, tmp_p, tmp_t, (255, 255, 255), 3, tipLength=0.2)
+                #     image_list.append(x_sample)
+                #     save_sample = preprocess_image(x_sample, device=model.device)
+                #     save_sample = save_sample * 0.5 + 0.5
+                #     save_image(save_sample, os.path.join(save_dir, 'result_%d.png'%update_times))
 
             # break if all handle points have reached the targets
             if args.point_track and check_handle_reach_target(F0, F1, handle_points, handle_points_init, target_points):
@@ -527,22 +530,21 @@ with block:
             selected_points = gr.State([]) # store points
             latents_list = gr.State(value=None)
             length = 480
+            point_track = gr.State(value=True)
+            training_reference = gr.State(value=True)
             with gr.Column():
                 gr.Markdown("""<p style="text-align: center; font-size: 25px">Draw Mask</p>""")
                 canvas = gr.Image(type="numpy", tool="sketch", label="Draw Mask", show_label=True, height=length, width=length) # for mask painting
                 # train_lora_button = gr.Button("Train LoRA")
                 gen_button = gr.Button("Gen image")
-                cut_button = gr.Button("Cut image")
             with gr.Column():
                 gr.Markdown("""<p style="text-align: center; font-size: 25px">Click Points</p>""")
                 input_image = gr.Image(type="numpy", label="Click Points", show_label=True, height=length, width=length) # for points clicking
                 undo_button = gr.Button("Undo point")
-                save_button = gr.Button("Save labels")
             with gr.Column():
                 gr.Markdown("""<p style="text-align: center; font-size: 25px">Editing Results</p>""")
                 output_image = gr.Image(type="numpy", label="Editing Results", show_label=True, height=length, width=length)
                 run_button = gr.Button("Run")
-                batch_run_button = gr.Button("Batch run")
 
 
         # general parameters
@@ -557,16 +559,14 @@ with block:
         with gr.Accordion(label="Algorithm Parameters", open=False):
             with gr.Tab("Drag Parameters"):
                 with gr.Row():
-                    n_pix_step = gr.Number(value=1000, label="n_pix_step", precision=0)
+                    n_pix_step = gr.Number(value=50, label="n_pix_step", precision=0)
                     n_actual_inference_step = gr.Number(value=35, label="n_actual_inference_step", precision=0)
                     guidance_scale = gr.Number(value=4, label="guidance scale")
                     ref_start_step = gr.Number(value=20, label="ref start step", precision=0)
                 with gr.Row():
                     use_gen_img = gr.Checkbox(value=False, label="based on generated images")
                     neg_same_prompt = gr.Checkbox(value=True, label="neg prompt same as prompt")
-                    point_track = gr.Checkbox(value=True, label="point tracking")
                     no_mask = gr.Checkbox(value=True, label="generate mask automaticly")
-                    training_reference = gr.Checkbox(value=True, label="reference during training")
                     reference_only = gr.Checkbox(value=True, label="reference during inference")
                     save_every_step = gr.Checkbox(value=False, label="save intermediate results")
                 seed = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
